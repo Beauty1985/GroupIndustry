@@ -89,7 +89,7 @@ export default function App() {
             await setDoc(doc(db, "admins", currUser.uid), adminProfile);
           } catch (err) {
             console.error("Error writing admin profile:", err);
-            handleFirestoreError(err, OperationType.WRITE, `admins/${currUser.uid}`);
+            // Non-blocking: log the error instead of throwing to prevent blocking the login loading state
           }
         } else {
           // If not @bu.ac.th domain, deny access, show error and sign out

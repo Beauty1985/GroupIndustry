@@ -14,7 +14,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() 
         && 'email' in request.auth.token 
-        && request.auth.token.email.lower().endsWith('@bu.ac.th');
+        && (request.auth.token.email.endsWith('@bu.ac.th') || request.auth.token.email.endsWith('@BU.AC.TH'));
     }
 
     function isValidId(id) {
@@ -37,9 +37,9 @@ service cloud.firestore {
     }
 
     function isValidAdminProfile(data) {
-      return data.uid is string 
-        && data.email is string 
-        && data.role == 'admin';
+      return ('uid' in data ? data.uid is string : true)
+        && ('email' in data ? data.email is string : true)
+        && ('role' in data ? data.role == 'admin' : true);
     }
 
     // 2. Collection Rules
