@@ -1,14 +1,15 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   Plus, Edit, Trash2, Upload, FileSpreadsheet, Download, RefreshCw, 
-  CheckCircle, AlertTriangle, Search, X, Check, Save, ArrowLeft
+  CheckCircle, AlertTriangle, Search, X, Check, Save, ArrowLeft,
+  Users, Shield, UserPlus, Mail, Database
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import * as XLSX from "xlsx";
 import { User } from "firebase/auth";
-import { collection, doc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, setDoc, deleteDoc, writeBatch, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db, OperationType, handleFirestoreError } from "../firebase";
-import { IndustrialCategory } from "../types";
+import { IndustrialCategory, AdminProfile } from "../types";
 
 interface AdminWorkspaceProps {
   categories: IndustrialCategory[];
@@ -21,6 +22,17 @@ export default function AdminWorkspace({
   user,
   refreshCategories,
 }: AdminWorkspaceProps) {
+  const [adminSubTab, setAdminSubTab] = useState<"database" | "admins">("database");
+  const [admins, setAdmins] = useState<AdminProfile[]>([]);
+  const [isLoadingAdmins, setIsLoadingAdmins] = useState(true);
+
+  // Admin management forms and states
+  const [isAddingAdmin, setIsAddingAdmin] = useState(false);
+  const [editingAdminUid, setEditingAdminUid] = useState<string | null>(null);
+  const [adminFormEmail, setAdminFormEmail] = useState("");
+  const [adminFormDisplayName, setAdminFormDisplayName] = useState("");
+  const [deleteConfirmAdminUid, setDeleteConfirmAdminUid] = useState<string | null>(null);
+
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,6 +41,103 @@ export default function AdminWorkspace({
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Real-time listener for admins
+  useEffect(() => {
+    const q = query(collection(db, "admins"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items: AdminProfile[] = [];
+      snapshot.forEach((doc) => {
+        items.push(doc.data() as AdminProfile);
+      });
+      setAdmins(items);
+      setIsLoadingAdmins(false);
+    }, (error) => {
+      console.error("Error listening to admins list:", error);
+      setIsLoadingAdmins(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Admin Management Functions
+  const handleAddAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminFormEmail.trim() || !adminFormDisplayName.trim()) return;
+
+    const email = adminFormEmail.trim().toLowerCase();
+    if (!email.endsWith("@bu.ac.th")) {
+      showFeedback("จำกัดเฉพาะอีเมลสถาบัน @bu.ac.th เท่านั้น", "error");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const uid = `manual-${Date.now()}`;
+      const newAdmin: AdminProfile = {
+        uid,
+        email,
+        displayName: adminFormDisplayName.trim(),
+        role: "admin",
+        createdAt: Date.now(),
+      };
+
+      await setDoc(doc(db, "admins", uid), newAdmin);
+      showFeedback(`แต่งตั้งผู้ดูแลระบบใหม่ (${newAdmin.displayName}) เรียบร้อยแล้ว`, "success");
+      
+      setAdminFormEmail("");
+      setAdminFormDisplayName("");
+      setIsAddingAdmin(false);
+    } catch (err) {
+      console.error("Error adding admin:", err);
+      handleFirestoreError(err, OperationType.CREATE, "admins");
+      showFeedback("เกิดข้อผิดพลาดในการแต่งตั้งผู้ดูแลระบบ", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveAdminEdit = async (uid: string) => {
+    if (!adminFormDisplayName.trim()) return;
+
+    setIsLoading(true);
+    try {
+      await setDoc(doc(db, "admins", uid), {
+        displayName: adminFormDisplayName.trim(),
+      }, { merge: true });
+
+      showFeedback("แก้ไขข้อมูลผู้ดูแลระบบเรียบร้อยแล้ว", "success");
+      setEditingAdminUid(null);
+      setAdminFormDisplayName("");
+    } catch (err) {
+      console.error("Error updating admin:", err);
+      handleFirestoreError(err, OperationType.UPDATE, `admins/${uid}`);
+      showFeedback("เกิดข้อผิดพลาดในการแก้ไขข้อมูล", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAdmin = async (uid: string) => {
+    if (uid === user.uid) {
+      showFeedback("คุณไม่สามารถลบสิทธิ์บัญชีผู้ดูแลระบบของตัวเองได้", "error");
+      setDeleteConfirmAdminUid(null);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await deleteDoc(doc(db, "admins", uid));
+      showFeedback("ยกเลิกสิทธิ์ผู้ดูแลระบบเรียบร้อยแล้ว", "success");
+    } catch (err) {
+      console.error("Error deleting admin:", err);
+      handleFirestoreError(err, OperationType.DELETE, `admins/${uid}`);
+      showFeedback("เกิดข้อผิดพลาดในการยกเลิกสิทธิ์", "error");
+    } finally {
+      setIsLoading(false);
+      setDeleteConfirmAdminUid(null);
+    }
+  };
 
   const showFeedback = (text: string, type: "success" | "error" | "info") => {
     setFeedback({ text, type });
@@ -367,8 +476,46 @@ export default function AdminWorkspace({
   return (
     <div className="space-y-6">
       
-      {/* Header and Bulk Operations Card */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 p-6">
+      {/* Tab Selectors for Admin Functions */}
+      <div className="bg-white px-6 py-4 rounded-3xl border border-slate-100 shadow-sm flex flex-wrap gap-6 items-center justify-between">
+        <div className="flex border-b border-slate-50 gap-6">
+          <button
+            onClick={() => setAdminSubTab("database")}
+            className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+              adminSubTab === "database"
+                ? "border-indigo-600 text-indigo-600 font-extrabold"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            <span>จัดการฐานข้อมูลจำแนกอุตสาหกรรม</span>
+          </button>
+          <button
+            onClick={() => setAdminSubTab("admins")}
+            className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+              adminSubTab === "admins"
+                ? "border-indigo-600 text-indigo-600 font-extrabold"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>จัดการสิทธิ์และรายชื่อผู้ดูแลระบบ</span>
+            <span className="bg-indigo-50 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full font-extrabold">
+              {admins.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+          <Shield className="w-3.5 h-3.5 text-indigo-500" />
+          <span>ระดับสิทธิ์สูงสุด (Root Authorized)</span>
+        </div>
+      </div>
+
+      {adminSubTab === "database" && (
+        <div className="space-y-6">
+          {/* Header and Bulk Operations Card */}
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 p-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
           <div>
             <h2 className="text-xl font-bold text-slate-800">ระบบจัดการฐานข้อมูล (Staff Database Management)</h2>
@@ -740,6 +887,279 @@ export default function AdminWorkspace({
           </table>
         </div>
       </div>
+    </div>
+  )}
+
+      {adminSubTab === "admins" && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Admin Management Header Card */}
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 p-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-bold">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>รายชื่อผู้ถือสิทธิ์ Admin</span>
+                </div>
+                <h1 className="text-lg font-black text-slate-800 tracking-tight">
+                  ระบบจัดการรายชื่อและสิทธิ์ผู้ดูแลระบบ (Admin Permissions)
+                </h1>
+                <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
+                  ผู้ดูแลระบบที่มีรายชื่อในส่วนนี้จะได้รับอนุญาตให้ล็อกอินและดำเนินการจัดการหมวดหมู่คำสำคัญหลักในฐานข้อมูลระบบจัดประเภทได้ทันที
+                </p>
+              </div>
+
+              <div>
+                <button
+                  onClick={() => {
+                    setIsAddingAdmin(!isAddingAdmin);
+                    setEditingAdminUid(null);
+                    setAdminFormEmail("");
+                    setAdminFormDisplayName("");
+                  }}
+                  className="w-full md:w-auto px-5 py-3 rounded-2xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100 transition-all duration-200 flex items-center justify-center gap-2"
+                >
+                  {isAddingAdmin ? (
+                    <>
+                      <X className="w-4 h-4" />
+                      <span>ปิดฟอร์มแต่งตั้ง</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>แต่งตั้งผู้ดูแลระบบใหม่</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Add / Edit Admin Form */}
+          <AnimatePresence>
+            {isAddingAdmin && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-gradient-to-tr from-slate-50 to-indigo-50/20 border border-indigo-100/50 rounded-3xl p-6 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                      <UserPlus className="w-4 h-4" />
+                    </div>
+                    <h3 className="font-extrabold text-slate-800 text-xs">
+                      ระบุข้อมูลเพื่อแต่งตั้งเป็นผู้ดูแลระบบคนใหม่
+                    </h3>
+                  </div>
+
+                  <form onSubmit={handleAddAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-500">
+                        อีเมลบัญชีผู้ใช้ (ต้องลงท้ายด้วย @bu.ac.th) *
+                      </label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={adminFormEmail}
+                          onChange={(e) => setAdminFormEmail(e.target.value)}
+                          placeholder="example@bu.ac.th"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-500">
+                        ชื่อ-นามสกุล / ชื่อแสดงผลผู้ดูแลระบบ *
+                      </label>
+                      <div className="relative">
+                        <Users className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          required
+                          value={adminFormDisplayName}
+                          onChange={(e) => setAdminFormDisplayName(e.target.value)}
+                          placeholder="ระบุชื่อแสดงตนในระบบบันทึกข้อมูล"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="md:col-span-2 border-t border-indigo-100/50 pt-4 flex justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingAdmin(false)}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                      >
+                        ยกเลิก
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 transition-colors flex items-center gap-1.5"
+                      >
+                        {isLoading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Shield className="w-3.5 h-3.5" />
+                        )}
+                        <span>แต่งตั้งสิทธิ์ผู้ดูแลระบบ</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Admins Table/Grid Card */}
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 p-6 space-y-4">
+            <h3 className="text-xs font-extrabold text-slate-800 flex items-center gap-2">
+              <Users className="w-4 h-4 text-indigo-500" />
+              <span>รายชื่อผู้ถือสิทธิ์ที่มีอยู่ในระบบปัจจุบัน ({admins.length} รายการ)</span>
+            </h3>
+
+            {isLoadingAdmins ? (
+              <div className="flex flex-col items-center justify-center py-12 space-y-2">
+                <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
+                <p className="text-xs text-slate-400 font-bold">กำลังดึงรายชื่อผู้ดูแลระบบ...</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-slate-50 rounded-2xl">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500 w-12 text-center">ลำดับ</th>
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500">ชื่อผู้ดูแลระบบ</th>
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500">อีเมล</th>
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500">ระดับสิทธิ์ (Role)</th>
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500">วันที่สร้าง / แต่งตั้ง</th>
+                      <th className="py-3 px-4 text-xs font-bold text-slate-500 text-center w-28">จัดการสิทธิ์</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {admins.map((adm, index) => {
+                      const isEditing = editingAdminUid === adm.uid;
+                      const isCurrentUser = adm.uid === user.uid;
+
+                      return (
+                        <tr key={adm.uid} className={`hover:bg-slate-50/40 transition-colors text-xs text-slate-700 ${isCurrentUser ? "bg-indigo-50/10" : ""}`}>
+                          <td className="py-4 px-4 text-center font-semibold text-slate-400">{index + 1}</td>
+                          
+                          <td className="py-4 px-4 font-bold text-slate-800">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={adminFormDisplayName}
+                                onChange={(e) => setAdminFormDisplayName(e.target.value)}
+                                className="w-full p-2 rounded-lg border border-indigo-300 text-xs focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2.5">
+                                {adm.photoURL ? (
+                                  <img
+                                    src={adm.photoURL}
+                                    alt={adm.displayName}
+                                    referrerPolicy="no-referrer"
+                                    className="w-7 h-7 rounded-full border border-slate-100"
+                                  />
+                                ) : (
+                                  <div className="w-7 h-7 rounded-full bg-indigo-600 text-white font-extrabold flex items-center justify-center text-[11px] uppercase shadow-sm shadow-indigo-100 shrink-0">
+                                    {adm.displayName ? adm.displayName.substring(0, 2) : "AD"}
+                                  </div>
+                                )}
+                                <div className="space-y-0.5">
+                                  <span className="font-bold text-slate-800">{adm.displayName}</span>
+                                  {isCurrentUser && (
+                                    <span className="ml-2 inline-flex items-center text-[9px] font-extrabold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-md">
+                                      คุณ (You)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 font-mono text-slate-600">{adm.email}</td>
+
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full font-bold text-[10px] uppercase">
+                              <Shield className="w-3 h-3 text-indigo-500" />
+                              <span>{adm.role}</span>
+                            </span>
+                          </td>
+
+                          <td className="py-4 px-4 text-slate-400">
+                            {adm.createdAt ? new Date(adm.createdAt).toLocaleDateString("th-TH", {
+                              year: "numeric",
+                              month: "long",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            }) : "-"}
+                          </td>
+
+                          <td className="py-4 px-4 text-center">
+                            {isEditing ? (
+                              <div className="flex justify-center gap-2">
+                                <button
+                                  onClick={() => handleSaveAdminEdit(adm.uid)}
+                                  className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition-colors"
+                                  title="บันทึก"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingAdminUid(null);
+                                    setAdminFormDisplayName("");
+                                  }}
+                                  className="p-1.5 bg-slate-50 text-slate-500 rounded-lg hover:bg-slate-100 transition-colors"
+                                  title="ยกเลิก"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex justify-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingAdminUid(adm.uid);
+                                    setAdminFormDisplayName(adm.displayName);
+                                  }}
+                                  className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
+                                  title="แก้ไขชื่อ"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmAdminUid(adm.uid)}
+                                  disabled={isCurrentUser}
+                                  className={`p-1.5 rounded-lg transition-colors ${
+                                    isCurrentUser
+                                      ? "bg-slate-50 text-slate-300 cursor-not-allowed"
+                                      : "bg-rose-50 text-rose-600 hover:bg-rose-100"
+                                  }`}
+                                  title={isCurrentUser ? "ไม่สามารถลบตัวเองได้" : "ยกเลิกสิทธิ์"}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Toast Feedback Notification */}
       <AnimatePresence>
@@ -807,6 +1227,60 @@ export default function AdminWorkspace({
                     <Trash2 className="w-3.5 h-3.5" />
                   )}
                   <span>ลบข้อมูล</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Admin Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmAdminUid && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full border border-slate-100 shadow-2xl p-6 space-y-5"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 shadow-sm">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5">
+                  <h3 className="font-extrabold text-slate-800 text-sm">ยกเลิกสิทธิ์ผู้ดูแลระบบ</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    คุณแน่ใจหรือไม่ว่าต้องการยกเลิกสิทธิ์ผู้ดูแลระบบของบุคคลนี้? การดำเนินการนี้จะระงับสิทธิ์ในการเข้าถึงและแก้ไขฐานข้อมูลทันที
+                  </p>
+                  {admins.find(a => a.uid === deleteConfirmAdminUid) && (
+                    <div className="p-3 bg-rose-50/50 rounded-xl border border-rose-100/50 text-xs text-rose-800 space-y-0.5 font-semibold">
+                      <p>ชื่อ: {admins.find(a => a.uid === deleteConfirmAdminUid)?.displayName}</p>
+                      <p>อีเมล: {admins.find(a => a.uid === deleteConfirmAdminUid)?.email}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-50 pt-4">
+                <button
+                  onClick={() => setDeleteConfirmAdminUid(null)}
+                  disabled={isLoading}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => handleDeleteAdmin(deleteConfirmAdminUid)}
+                  disabled={isLoading}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-100 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>ยืนยันถอดถอนสิทธิ์</span>
                 </button>
               </div>
             </motion.div>

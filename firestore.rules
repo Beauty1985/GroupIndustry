@@ -12,7 +12,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email.endsWith('@bu.ac.th');
+      return isSignedIn() 
+        && 'email' in request.auth.token 
+        && request.auth.token.email.lower().endsWith('@bu.ac.th');
     }
 
     function isValidId(id) {
@@ -49,8 +51,8 @@ service cloud.firestore {
 
     match /admins/{adminId} {
       allow read: if isSignedIn(); // authenticated users can check admins list
-      allow create, update: if isAdmin() && isValidId(adminId) && request.auth.uid == adminId && isValidAdminProfile(incoming());
-      allow delete: if false; // profiles are permanent once verified
+      allow create, update: if isAdmin() && isValidId(adminId) && isValidAdminProfile(incoming());
+      allow delete: if isAdmin() && isValidId(adminId);
     }
   }
 }
