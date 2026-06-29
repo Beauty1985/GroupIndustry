@@ -1,0 +1,8 @@
+{
+  "name": "Industrial Category Grouping",
+  "description": "ระบบจัดกลุ่มประเภทอุตสาหกรรมอัจฉริยะ ค้นหาและจำแนกประเภทอุตสาหกรรมด้วยคำสำคัญ รองรับการนำเข้าไฟล์ Excel/CSV และจัดการข้อมูลผ่านคลาวด์",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

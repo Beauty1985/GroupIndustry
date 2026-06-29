@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email.endsWith('@bu.ac.th');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity validations
+    function isValidIndustrialCategory(data) {
+      return data.id is string 
+        && data.keyword is string 
+        && data.categoryName is string;
+    }
+
+    function isValidAdminProfile(data) {
+      return data.uid is string 
+        && data.email is string 
+        && data.role == 'admin';
+    }
+
+    // 2. Collection Rules
+    match /industrial_categories/{categoryId} {
+      allow read: if true; // anyone can view categories to match them
+      allow create, update: if isAdmin() && isValidId(categoryId) && isValidIndustrialCategory(incoming());
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn(); // authenticated users can check admins list
+      allow create, update: if isAdmin() && isValidId(adminId) && request.auth.uid == adminId && isValidAdminProfile(incoming());
+      allow delete: if false; // profiles are permanent once verified
+    }
+  }
+}
